@@ -15,20 +15,16 @@
  */
 package org.openrewrite.openapi.swagger;
 
-import org.openrewrite.ExecutionContext;
-import org.openrewrite.Preconditions;
-import org.openrewrite.Recipe;
-import org.openrewrite.TreeVisitor;
+import org.openrewrite.*;
 import org.openrewrite.java.AnnotationMatcher;
 import org.openrewrite.java.JavaIsoVisitor;
 import org.openrewrite.java.JavaParser;
 import org.openrewrite.java.JavaTemplate;
 import org.openrewrite.java.search.UsesMethod;
-import org.openrewrite.java.tree.Expression;
-import org.openrewrite.java.tree.J;
+import org.openrewrite.java.tree.*;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 public class MigrateApiParamDefaultValue extends Recipe {
     private static final String FQN_SCHEMA = "io.swagger.v3.oas.annotations.media.Schema";
@@ -58,47 +54,70 @@ public class MigrateApiParamDefaultValue extends Recipe {
                             return anno;
                         }
 
-                        StringBuilder tpl = new StringBuilder();
-                        StringBuilder schemaTpl = new StringBuilder();
-                        List<Expression> args = new ArrayList<>();
-                        for (Expression exp : anno.getArguments()) {
-                            if (isDefaultValue(exp)) {
-                                Expression expression = ((J.Assignment) exp).getAssignment();
-                                addSchema(schemaTpl, "defaultValue");
-                                args.add(expression);
+                        StringJoiner tpl = new StringJoiner(", ");
+                        StringJoiner schemaTpl = new StringJoiner(", ", "schema = @Schema(", ")");
+                        List<Expression> tplArgs = new ArrayList<>();
+                        List<Expression> schemaTplArgs = new ArrayList<>();
+
+                        for (Expression attr : anno.getArguments()) {
+                            if (isDefaultValue(attr)) { // handle defaultValue
+                                Expression assignment = ((J.Assignment) attr).getAssignment();
+                                schemaTpl.add("defaultValue = #{any()}");
+                                schemaTplArgs.add(assignment);
+                            } else if (isAllowableValues(attr)) { // handle allowableValues
+                                Expression attrValue = ((J.Assignment) attr).getAssignment();
+
+                                String arrayValues = Arrays.stream(attrValue.toString().split(","))
+                                        .map(v -> "\"" + v.trim() + "\"")
+                                        .collect(Collectors.joining(", ", "{", "}"));
+
+                                // TODO attr 属性值改为 arrayValues
+                                // 创建数组表达式来替换原始的字符串值
+                                anno = JavaTemplate.builder(arrayValues)
+                                        .build()
+                                        .apply(updateCursor(anno), attrValue.getCoordinates().replace());
+
+                                schemaTpl.add("allowableValues = #{any()}");
+                                schemaTplArgs.add(findAllowableValues(anno));
                             } else {
-                                tpl.append("#{any()}, ");
-                                args.add(exp);
+                                tpl.add("#{any()}");
+                                tplArgs.add(attr);
                             }
                         }
-                        if (tpl.toString().endsWith(", ")) {
-                            tpl.delete(tpl.length() - 2, tpl.length());
+
+                        //String javaTpl = schemaTpl.length() > 18 ? tpl.add(schemaTpl.toString()).toString() : tpl.toString();
+                        String javaTpl = tpl.toString();
+                        if (!schemaTplArgs.isEmpty()) {
+                            javaTpl = tpl.add(schemaTpl.toString()).toString();
+                            tplArgs.addAll(schemaTplArgs);
                         }
-                        if (schemaTpl.length() > 0) {
-                            if (schemaTpl.toString().endsWith(", ")) {
-                                schemaTpl.delete(schemaTpl.length() - 2, schemaTpl.length());
-                            }
-                            schemaTpl.append(")");
-                            tpl.append(", ").append(schemaTpl);
-                        }
-                        anno = JavaTemplate.builder(tpl.toString())
+
+                        anno = JavaTemplate.builder(javaTpl)
                                 .imports(FQN_SCHEMA)
                                 .javaParser(JavaParser.fromJavaVersion().classpathFromResources(ctx, "swagger-annotations"))
                                 .build()
-                                .apply(updateCursor(anno), annotation.getCoordinates().replaceArguments(), args.toArray());
+                                .apply(updateCursor(anno), annotation.getCoordinates().replaceArguments(), tplArgs.toArray());
                         maybeAddImport(FQN_SCHEMA, false);
                         return maybeAutoFormat(annotation, anno, ctx, getCursor().getParentTreeCursor());
                     }
 
-                    private void addSchema(StringBuilder tpl, String key) {
-                        if (tpl.length() == 0) {
-                            tpl.append("schema = @Schema(");
-                        }
-                        tpl.append(key).append(" = #{any()}, ");
-                    }
-
                     private boolean isDefaultValue(Expression exp) {
                         return exp instanceof J.Assignment && "defaultValue".equals(((J.Identifier) ((J.Assignment) exp).getVariable()).getSimpleName());
+                    }
+
+                    private boolean isAllowableValues(Expression exp) {
+                        return exp instanceof J.Assignment && "allowableValues".equals(((J.Identifier) ((J.Assignment) exp).getVariable()).getSimpleName());
+                    }
+
+                    private Expression findAllowableValues(Expression anno) {
+                        if (anno instanceof J.Annotation) {
+                            return ((J.Annotation) anno).getArguments().stream()
+                                    .filter(this::isAllowableValues)
+                                    .map(attr -> ((J.Assignment) attr).getAssignment())
+                                    .findFirst()
+                                    .orElse(null);
+                        }
+                        return null;
                     }
                 }
         );
