@@ -32,19 +32,22 @@ public class MigrateApiParamDefaultValue extends Recipe {
 
     @Override
     public String getDisplayName() {
-        return "Migrate `@ApiParam(defaultValue)` to `@Parameter(schema)`";
+        return "Migrate `@ApiParam(defaultValue, allowableValues)` to `@Parameter(schema, allowableValues)`";
     }
 
     @Override
     public String getDescription() {
-        return "Migrate `@ApiParam(defaultValue)` to `@Parameter(schema = @Schema(defaultValue))`.";
+        return "Migrate `@ApiParam(defaultValue, allowableValues)` to `@Parameter(schema = @Schema(defaultValue, allowableValues))`.";
     }
 
     @Override
     public TreeVisitor<?, ExecutionContext> getVisitor() {
         // This recipe is after ChangeType recipe
         return Preconditions.check(
-                new UsesMethod<>("io.swagger.annotations.ApiParam defaultValue()", false),
+                Preconditions.or(
+                        new UsesMethod<>("io.swagger.annotations.ApiParam defaultValue()", false),
+                        new UsesMethod<>("io.swagger.annotations.ApiParam allowableValues()", false)
+                ),
                 new JavaIsoVisitor<ExecutionContext>() {
                     @Override
                     public J.Annotation visitAnnotation(J.Annotation annotation, ExecutionContext ctx) {
@@ -91,13 +94,12 @@ public class MigrateApiParamDefaultValue extends Recipe {
                             javaTpl = tpl.add(schemaTpl.toString()).toString();
                             tplArgs.addAll(schemaTplArgs);
                         }
-
+                        maybeAddImport(FQN_SCHEMA, false);
                         anno = JavaTemplate.builder(javaTpl)
                                 .imports(FQN_SCHEMA)
                                 .javaParser(JavaParser.fromJavaVersion().classpathFromResources(ctx, "swagger-annotations"))
                                 .build()
                                 .apply(updateCursor(anno), annotation.getCoordinates().replaceArguments(), tplArgs.toArray());
-                        maybeAddImport(FQN_SCHEMA, false);
                         return maybeAutoFormat(annotation, anno, ctx, getCursor().getParentTreeCursor());
                     }
 

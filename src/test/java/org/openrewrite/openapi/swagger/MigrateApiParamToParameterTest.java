@@ -35,7 +35,7 @@ public class MigrateApiParamToParameterTest implements RewriteTest {
                  @ApiParam(example = "1001", required = true, value = "PID")
                  private Long poiId;
 
-                 @ApiParam(example = "0", required = true, defaultValue = "0", allowableValues="10,20", value = "分页offset")
+                 @ApiParam(example = "0", required = true, defaultValue = "30", allowableValues="10,20", value = "分页offset")
                  private Integer offset = 0;
 
                  @ApiParam(example = "0", required = true, defaultValue = "0", value = "不限区间 -1 其他 1 默认1")
